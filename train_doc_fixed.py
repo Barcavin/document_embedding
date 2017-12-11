@@ -7,8 +7,8 @@ import os
 
 import Config
 
-
-
+holding = 479186
+epochs = 21
 def read_data_preprocessed(dataset_name=Config.dataset_name,train=True):
     """
     return lines:
@@ -73,11 +73,13 @@ del read_data_preprocessed,lines2struct,build_dataset
 document_index = 0 # Index indicating which document is being used
 data_index = 0 # Index in corresponding document
 complete = True
+epoch = 0
 
 def generate_batch(batch_size=Config.batch_size,skip_window=Config.skip_window): # CBOW batch
     global document_index
     global data_index
     global complete
+    global epoch
     batch = np.ndarray(shape=(batch_size),dtype = np.int32)
     document_label = np.ndarray(shape=(batch_size),dtype = np.int32)
     labels = np.ndarray(shape=(batch_size, 1), dtype = np.int32)
@@ -91,9 +93,10 @@ def generate_batch(batch_size=Config.batch_size,skip_window=Config.skip_window):
         if indicate <= 0:
             document_index += 1
             data_index = 0
-            if document_index == len(data):
+            if document_index > 479186:
                 document_index = 0
                 complete = False
+                epoch += 1
             continue
         whole = data[document_index][2][data_index:data_index+span]
         target = whole[skip_window]
@@ -131,31 +134,15 @@ with graph.as_default():
         embeddings = tf.Variable(tf.random_uniform([Config.vocabulary_size, Config.embedding_size], -1.0, 1.0),name='embedding')
         embed = tf.nn.embedding_lookup(embeddings, train_inputs) # 128x512 batch_size x embedding_size
 
-        document_embeddings = tf.Variable(tf.random_uniform([document_size, Config.document_embedding_size], -1.0, 1.0),name='document_embedding')
+        document_embeddings = tf.Variable(tf.random_uniform([document_size, 50], -1.0, 1.0),name='document_embedding')
         document_embed = tf.nn.embedding_lookup(document_embeddings, train_document)
 
         nce_weights = tf.Variable(
-            tf.truncated_normal([Config.vocabulary_size, Config.embedding_size + Config.document_embedding_size ],
-                                stddev=1.0 / math.sqrt(Config.embedding_size + Config.document_embedding_size)),name = "softmax_weight")
+            tf.truncated_normal([Config.vocabulary_size, Config.embedding_size + 50 ],
+                                stddev=1.0 / math.sqrt(Config.embedding_size + 50)),name = "softmax_weight")
         nce_biases = tf.Variable(tf.zeros([Config.vocabulary_size]),name = "softmax_biases")
 
         total_embed = tf.concat([embed,document_embed],1)
-    # ====================================================================
-    # loss = tf.reduce_mean(
-    #     tf.nn.nce_loss(weights=nce_weights,
-    #                    biases=nce_biases,
-    #                    labels=train_labels,
-    #                    inputs=embed,
-    #                    num_sampled=Config.num_sampled,
-    #                    num_classes=Config.vocabulary_size))
-    # ====================================================
-    # logits = tf.matmul(embed, tf.transpose(nce_weights))
-    # logits = tf.nn.bias_add(logits, nce_biases)
-    # labels_one_hot = tf.one_hot(train_labels, Config.vocabulary_size)
-    # loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-    #   labels=labels_one_hot,
-    #   logits=logits))
-    # =====================================================================
     loss = tf.reduce_mean(tf.nn.sampled_softmax_loss(
         weights=nce_weights,
         biases=nce_biases,
@@ -183,12 +170,12 @@ with graph.as_default():
 num_steps = Config.num_steps
 
 restore = False
-if os.path.exists(Config.model_path):
+if os.path.exists("model_windowSize2/"):
     restore = True
-    model_path  = tf.train.latest_checkpoint(Config.model_path)
+    model_path  = tf.train.latest_checkpoint("model_windowSize2/")
     start_of_number = model_path.index('-')+1
     document_index = int(model_path[start_of_number:])
-    
+
 with tf.Session(graph=graph) as session:
   # Initialized all the variables in our graph:
   if restore:
@@ -198,76 +185,66 @@ with tf.Session(graph=graph) as session:
       init.run()
       print('Initialized')
 
-  average_loss = 0
+  # word_embedding_matrix = embeddings.eval()
+  # softmax_matrix = nce_weights.eval()
+  # softmax_biases_matrix = nce_biases.eval()
+  word_embedding_matrix = normalized_embeddings.eval()
+
+document_size = holding
+new_graph = tf.Graph()
+with new_graph.as_default():
+    train_inputs = tf.placeholder(tf.int32,shape=[Config.batch_size])
+    train_document = tf.placeholder(tf.int32,shape=[Config.batch_size])
+    train_labels = tf.placeholder(tf.int32, shape=[Config.batch_size, 1])
+
+    embeddings = tf.constant(word_embedding_matrix,name='embedding')
+    embed = tf.nn.embedding_lookup(embeddings, train_inputs)
+
+    document_embeddings = tf.Variable(tf.random_uniform([document_size, Config.document_embedding_size], -1.0, 1.0),name='document_embedding')
+    document_embed = tf.nn.embedding_lookup(document_embeddings, train_document)
+
+    nce_weights = tf.Variable(
+        tf.truncated_normal([Config.vocabulary_size, Config.embedding_size + Config.document_embedding_size ],
+                            stddev=1.0 / math.sqrt(Config.embedding_size + Config.document_embedding_size)),name = "softmax_weight")
+    nce_biases = tf.Variable(tf.zeros([Config.vocabulary_size]),name = "softmax_biases")
+    total_embed = tf.concat([embed,document_embed],1)
+
+    loss = tf.reduce_mean(tf.nn.sampled_softmax_loss(
+        weights=nce_weights,
+        biases=nce_biases,
+        labels=train_labels,
+        inputs=total_embed,
+        num_sampled=Config.num_sampled,
+        num_classes=Config.vocabulary_size))
+    optimizer = tf.train.AdamOptimizer().minimize(loss)
+    saver = tf.train.Saver(max_to_keep = 3)
+    init = tf.global_variables_initializer()
+
+restore = False
+if os.path.exists(Config.model_path):
+    restore = True
+    model_path  = tf.train.latest_checkpoint(Config.model_path)
+    start_of_number = model_path.index('-')+1
+    document_index = int(model_path[start_of_number:])
+
+with tf.Session(graph=new_graph) as session:
+  # Initialized all the variables in our graph:
+  if restore:
+      saver.restore(session,model_path)
+      print("Restored")
+  else:
+      init.run()
+      print('Initialized')
   step = 0
-  while complete: # complete = False when all train data is loaded at least once
-    batch_inputs, batch_doc ,batch_labels = generate_batch(
-        Config.batch_size, Config.skip_window)
-    feed_dict = {train_inputs: batch_inputs,train_document:batch_doc ,train_labels: batch_labels}
+  while epoch < epochs:
+      step += 1
+      batch_inputs, batch_doc ,batch_labels = generate_batch(
+          Config.batch_size, Config.skip_window)
+      feed_dict = {train_inputs: batch_inputs,train_document:batch_doc ,train_labels: batch_labels}
 
 
-    _, loss_val = session.run([optimizer, loss], feed_dict=feed_dict)
-    average_loss += loss_val
-
-# ==========================================================================
-# The following part of the session is to calculate the average_loss and find the nearest words to our chosen sample words.
-# Code and idea is inspired by the TensorFlow WordEmbedding tutorial.
-# ==========================================================================
-    if step % 2000 == 0:
-      if step > 0:
-        average_loss /= 2000
-      # The average loss is an estimate of the loss over the last 2000 batches.
-      print('Average loss at step ', step, ': ', average_loss,". document_index: ",document_index)
-      average_loss = 0
-
-    #
-    if step % 10000 == 0:
-         sim = similarity.eval()
-         for i in range(valid_size):
-             valid_word = reverse_dictionary[valid_examples[i]]
-             top_k = 8  # number of nearest neighbors
-             nearest = (-sim[i, :]).argsort()[1:top_k + 1]
-             log_str = 'Nearest to %s:' % valid_word
-             for k in range(top_k):
-                 close_word = reverse_dictionary[nearest[k]]
-                 log_str = '%s %s,' % (log_str, close_word)
-             print(log_str)
-    if step % 50000 == 0 and step > 0:
-        save_path = saver.save(session,Config.model_path+'doc',global_step=document_index)
-        with open(save_path,'w') as h:
-            h.write(save_path)
-    step += 1
-  # Save the final word embedding and doc embedding as two matrices.
-  final_embeddings = normalized_embeddings.eval()
-  final_doc_embeddings = doc_normalized_embeddings.eval()[:document_index,:]
-
-
-def plot_with_labels(low_dim_embs, labels, filename):
-  assert low_dim_embs.shape[0] >= len(labels), 'More labels than embeddings'
-  plt.figure(figsize=(18, 18))  # in inches
-  for i, label in enumerate(labels):
-    x, y = low_dim_embs[i, :]
-    plt.scatter(x, y)
-    plt.annotate(label,
-                 xy=(x, y),
-                 xytext=(5, 2),
-                 textcoords='offset points',
-                 ha='right',
-                 va='bottom')
-
-  plt.savefig(filename)
-
-try:
-  # pylint: disable=g-import-not-at-top
-  from sklearn.manifold import TSNE
-  import matplotlib.pyplot as plt
-
-  tsne = TSNE(perplexity=30, n_components=2, init='pca', n_iter=5000, method='exact')
-  plot_only = 500
-  low_dim_embs = tsne.fit_transform(final_embeddings[:plot_only, :])
-  word_labels = [reverse_dictionary[i] for i in range(plot_only)]
-  plot_with_labels(low_dim_embs, word_labels, os.path.join(os.getcwd(), str(int(time.time()))+'tsne.png'))
-
-except ImportError as ex:
-  print('Please install sklearn, matplotlib, and scipy to show embeddings.')
-  print(ex)
+      _, loss_val = session.run([optimizer, loss], feed_dict=feed_dict)
+      if step % 5000==0:
+          print("step %i,epoch %i,document %i"%(step,epoch,document_index))
+      if step % 50000 == 0 :
+          saver.save(session,Config.model_path+'doc',global_step=document_index)

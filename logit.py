@@ -6,11 +6,12 @@ import time
 import os
 
 logit_batch = 200
-epochs = 20
+epochs = 300
 units = 20
 nclass = 2
 learning_rate = 0.02
-new_path = 'logit_'+Config.model_path
+
+holding = Config.holding
 
 def get_doc_labels():
     def read_data_preprocessed(dataset_name=Config.dataset_name,train=True):
@@ -42,70 +43,13 @@ def get_doc_labels():
         return result
 
 
-    model_path  = tf.train.latest_checkpoint(Config.model_path)
-    document_index = int(model_path[10:])
+
     result = lines2struct()
-    document_size = len(result)
-    document_label = [int(label[1]) for label in result][:document_index]
+    document_label = [int(label[1]) for label in result][:holding]
     del result,lines2struct,read_data_preprocessed
-    # =============================================================
-    valid_size = 16     # Random set of words to evaluate similarity on.
-    valid_window = 100  # Only pick dev samples in the head of the distribution.
-    valid_examples = np.random.choice(valid_window, valid_size, replace=False)
-    # Build the graph
-    # ===================================================================================================================================================================
-    graph = tf.Graph()
-    with graph.as_default():
+    import get_fixed_doc
+    doc = get_fixed_doc.get_fixed_doc()
 
-        train_inputs = tf.placeholder(tf.int32,shape=[Config.batch_size])
-        train_document = tf.placeholder(tf.int32,shape=[Config.batch_size])
-        train_labels = tf.placeholder(tf.int32, shape=[Config.batch_size, 1])
-        valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
-
-
-        with tf.device('/cpu:0'):
-            embeddings = tf.Variable(tf.random_uniform([Config.vocabulary_size, Config.embedding_size], -1.0, 1.0),name='embedding')
-            embed = tf.nn.embedding_lookup(embeddings, train_inputs) # 128x512 batch_size x embedding_size
-
-            document_embeddings = tf.Variable(tf.random_uniform([document_size, Config.document_embedding_size], -1.0, 1.0),name='document_embedding')
-            document_embed = tf.nn.embedding_lookup(document_embeddings, train_document)
-
-            nce_weights = tf.Variable(
-                tf.truncated_normal([Config.vocabulary_size, Config.embedding_size + Config.document_embedding_size ],
-                                    stddev=1.0 / math.sqrt(Config.embedding_size + Config.document_embedding_size)),name = "softmax_weight")
-            nce_biases = tf.Variable(tf.zeros([Config.vocabulary_size]),name = "softmax_biases")
-
-            total_embed = tf.concat([embed,document_embed],1)
-
-        loss = tf.reduce_mean(tf.nn.sampled_softmax_loss(
-            weights=nce_weights,
-            biases=nce_biases,
-            labels=train_labels,
-            inputs=total_embed,
-            num_sampled=Config.num_sampled,
-            num_classes=Config.vocabulary_size))
-        # optimizer = tf.train.GradientDescentOptimizer(1.0).minimize(loss)
-        optimizer = tf.train.AdamOptimizer().minimize(loss)
-        norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
-        normalized_embeddings = tf.Variable(embeddings / norm)
-        doc_norm = tf.sqrt(tf.reduce_sum(tf.square(document_embeddings), 1, keep_dims=True))
-        doc_normalized_embeddings = tf.Variable(document_embeddings / doc_norm)
-
-        saver = tf.train.Saver()
-        temp_normalized_embeddings = embeddings / norm
-        valid_embeddings = tf.nn.embedding_lookup(
-            temp_normalized_embeddings, valid_dataset)
-        similarity = tf.matmul(
-            valid_embeddings, temp_normalized_embeddings, transpose_b=True)
-
-        init = tf.global_variables_initializer()
-
-    # ===========================================================================================================
-
-    with tf.Session(graph=graph) as session:
-        saver.restore(session,model_path)
-        doc = doc_normalized_embeddings.eval()
-    doc = doc[:document_index,:]
     document_label = np.array(document_label)
     document_label -=1 # 0,1
 
@@ -118,9 +62,9 @@ def generate_batch(batch_size,doc,document_label):
     global epoch
     i = train_index
     beyond = False
-    if train_index + batch_size >= doc.shape[0]:
+    if train_index + batch_size >= holding:
         beyond = True
-        train_index = train_index + batch_size - doc.shape[0]
+        train_index = train_index + batch_size - holding
         epoch += 1
     else:
         train_index += batch_size
@@ -130,7 +74,6 @@ def generate_batch(batch_size,doc,document_label):
         return doc[i:train_index,],document_label[i:train_index]
 
 doc,document_label = get_doc_labels()
-document_index = doc.shape[0]
 
 logit_graph = tf.Graph()
 with logit_graph.as_default():
@@ -158,37 +101,25 @@ with logit_graph.as_default():
     saver = tf.train.Saver(max_to_keep = 3)
 
 # ===================================================================================================
-restore = False
-##if os.path.exists(new_path):
-##    restore = True
-##    model_path  = tf.train.latest_checkpoint(new_path)
-
-# with tf.Session(graph=logit_graph) as session:
-session = tf.Session(graph=logit_graph)
-if restore:
-    saver.restore(session,model_path)
-    print("Restored")
-else:
+with tf.Session(graph=logit_graph) as session:
     init.run(session=session)
     print("Initialized")
 
-average_loss = 0
-step = 0
-while epoch < epochs:
-    batch_inputs,batch_labels = generate_batch(logit_batch,doc,document_label)
-    feed_dict = {train_inputs:batch_inputs,train_labels:batch_labels}
-    _ , loss_val = session.run([optimizer, loss],feed_dict = feed_dict)
-    average_loss += loss_val
-    step += 1
-    if step % 100 == 0:
-        average_loss /= 100
-        print('Average loss at step ', step, ': ', average_loss,", epoch:",epoch)
-        average_loss = 0
-##        if step % 500 ==0:
-##            saver.save(session,new_path,global_step=epoch)
-print("Complete Train")
-print("Calculate accuracy")
-feed_dict = {train_inputs:doc,train_labels:document_label}
-pred = session.run(prediction,feed_dict = feed_dict)
-acc = np.sum(pred==document_label)
-print("The accuracy is %f" % acc[0])
+    average_loss = 0
+    step = 0
+    while epoch < epochs:
+        batch_inputs,batch_labels = generate_batch(logit_batch,doc,document_label)
+        feed_dict = {train_inputs:batch_inputs,train_labels:batch_labels}
+        _ , loss_val = session.run([optimizer, loss],feed_dict = feed_dict)
+        average_loss += loss_val
+        step += 1
+        if step % 100 == 0:
+            average_loss /= 100
+            print('Average loss at step ', step, ': ', average_loss,", epoch:",epoch)
+            average_loss = 0
+    print("Complete Train")
+    print("Calculate accuracy")
+    feed_dict = {train_inputs:doc}
+    pred = session.run(prediction,feed_dict = feed_dict)
+    acc = np.mean(pred==document_label)
+    print("The accuracy is %f" % acc)

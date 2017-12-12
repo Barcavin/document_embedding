@@ -7,8 +7,8 @@ import os
 
 import Config
 
-holding = 479186
-epochs = 21
+holding = Config.holding # Number of documents to train
+epochs = 50
 def read_data_preprocessed(dataset_name=Config.dataset_name,train=True):
     """
     return lines:
@@ -72,13 +72,11 @@ del read_data_preprocessed,lines2struct,build_dataset
 
 document_index = 0 # Index indicating which document is being used
 data_index = 0 # Index in corresponding document
-complete = True
 epoch = 0
 
 def generate_batch(batch_size=Config.batch_size,skip_window=Config.skip_window): # CBOW batch
     global document_index
     global data_index
-    global complete
     global epoch
     batch = np.ndarray(shape=(batch_size),dtype = np.int32)
     document_label = np.ndarray(shape=(batch_size),dtype = np.int32)
@@ -93,9 +91,8 @@ def generate_batch(batch_size=Config.batch_size,skip_window=Config.skip_window):
         if indicate <= 0:
             document_index += 1
             data_index = 0
-            if document_index > 479186:
+            if document_index > holding:
                 document_index = 0
-                complete = False
                 epoch += 1
             continue
         whole = data[document_index][2][data_index:data_index+span]
@@ -114,89 +111,16 @@ def generate_batch(batch_size=Config.batch_size,skip_window=Config.skip_window):
                 break
     return batch,document_label,labels
 
-# =============================================================
-valid_size = 16
-valid_window = 100
-valid_examples = np.random.choice(valid_window, valid_size, replace=False)
-document_size = len(data)
-# Build the graph.
-graph = tf.Graph()
+from get_word_embedding import get_word_embedding
 
-with graph.as_default():
-
-    train_inputs = tf.placeholder(tf.int32,shape=[Config.batch_size])
-    train_document = tf.placeholder(tf.int32,shape=[Config.batch_size])
-    train_labels = tf.placeholder(tf.int32, shape=[Config.batch_size, 1])
-    valid_dataset = tf.constant(valid_examples, dtype=tf.int32)
-
-    with tf.device('/device:GPU:0'):
-    # with tf.device('/cpu:0'): # Use CPU instead if the GPU memory is not large enough to store all the parameters
-        embeddings = tf.Variable(tf.random_uniform([Config.vocabulary_size, Config.embedding_size], -1.0, 1.0),name='embedding')
-        embed = tf.nn.embedding_lookup(embeddings, train_inputs) # 128x512 batch_size x embedding_size
-
-        document_embeddings = tf.Variable(tf.random_uniform([document_size, 50], -1.0, 1.0),name='document_embedding')
-        document_embed = tf.nn.embedding_lookup(document_embeddings, train_document)
-
-        nce_weights = tf.Variable(
-            tf.truncated_normal([Config.vocabulary_size, Config.embedding_size + 50 ],
-                                stddev=1.0 / math.sqrt(Config.embedding_size + 50)),name = "softmax_weight")
-        nce_biases = tf.Variable(tf.zeros([Config.vocabulary_size]),name = "softmax_biases")
-
-        total_embed = tf.concat([embed,document_embed],1)
-    loss = tf.reduce_mean(tf.nn.sampled_softmax_loss(
-        weights=nce_weights,
-        biases=nce_biases,
-        labels=train_labels,
-        inputs=total_embed,
-        num_sampled=Config.num_sampled,
-        num_classes=Config.vocabulary_size))
-    # optimizer = tf.train.GradientDescentOptimizer(1.0).minimize(loss)
-    optimizer = tf.train.AdamOptimizer().minimize(loss)
-    norm = tf.sqrt(tf.reduce_sum(tf.square(embeddings), 1, keep_dims=True))
-    normalized_embeddings = tf.Variable(embeddings / norm)
-    doc_norm = tf.sqrt(tf.reduce_sum(tf.square(document_embeddings), 1, keep_dims=True))
-    doc_normalized_embeddings = tf.Variable(document_embeddings / doc_norm)
-
-    saver = tf.train.Saver(max_to_keep = 3)
-
-    temp_normalized_embeddings = embeddings / norm
-    valid_embeddings = tf.nn.embedding_lookup(
-        temp_normalized_embeddings, valid_dataset)
-    similarity = tf.matmul(
-        valid_embeddings, temp_normalized_embeddings, transpose_b=True)
-
-    init = tf.global_variables_initializer()
-
-num_steps = Config.num_steps
-
-restore = False
-if os.path.exists("model_windowSize2/"):
-    restore = True
-    model_path  = tf.train.latest_checkpoint("model_windowSize2/")
-    start_of_number = model_path.index('-')+1
-    document_index = int(model_path[start_of_number:])
-
-with tf.Session(graph=graph) as session:
-  # Initialized all the variables in our graph:
-  if restore:
-      saver.restore(session,model_path)
-      print("Restored")
-  else:
-      init.run()
-      print('Initialized')
-
-  # word_embedding_matrix = embeddings.eval()
-  # softmax_matrix = nce_weights.eval()
-  # softmax_biases_matrix = nce_biases.eval()
-  word_embedding_matrix = normalized_embeddings.eval()
-
+word_embedding_matrix = get_word_embedding()
 document_size = holding
 new_graph = tf.Graph()
 with new_graph.as_default():
     train_inputs = tf.placeholder(tf.int32,shape=[Config.batch_size])
     train_document = tf.placeholder(tf.int32,shape=[Config.batch_size])
     train_labels = tf.placeholder(tf.int32, shape=[Config.batch_size, 1])
-
+    
     embeddings = tf.constant(word_embedding_matrix,name='embedding')
     embed = tf.nn.embedding_lookup(embeddings, train_inputs)
 
@@ -244,7 +168,7 @@ with tf.Session(graph=new_graph) as session:
 
 
       _, loss_val = session.run([optimizer, loss], feed_dict=feed_dict)
-      if step % 5000==0:
+      if step % 2000==0:
           print("step %i,epoch %i,document %i"%(step,epoch,document_index))
       if step % 50000 == 0 :
           saver.save(session,Config.model_path+'doc',global_step=document_index)

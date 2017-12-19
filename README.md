@@ -1,14 +1,22 @@
-# Step 1:
-Modify the value in "Config.py" file: (I have modified it, you can skip this step now)
-holding = 100000. The number of documents we will train.
-model_path: The path to save the model. You can leave it unchanged or set another name.
+# File definition:
 
-# Step 2: Train the document embedding model
-Run "python train_doc_fixed.py" to train the document embedding matrix. (Or you can just double click the "train_doc_fixed.py" to start the program. I can do that on my computer.)
+## Config.py Configuration file that store the hyper parameters. Shared through several scripts.
 
-## Notice:
-There is a parameter called "epochs" in "train_doc_fixed.py" file. It controls how many epochs we will train the model. I don't write code to track how many epochs we have already trained. If you shut down the training process before it completes, make sure to decrease
-"epochs" value to how many epochs still left to train (Just roughly, no need to be accurate, in case of you forgot how many epochs we have trained if shutting down the program several times)
+## eval.py Useless file for reader. Used for validating the training process.
 
-# Step 3: Feed the document embedding matrix to a neural network.
-You can use IDE to run "logit.py".(May not use terminal because the terminal will close immediately after it prints the accuracy.) There is also a parameter called "epochs". Large epochs lead to high train performance, but maybe over-fitting. Tune the parameter by yourself based on your Machine Learning knowledge!
+## get_fixed_doc.py Function to get the document embedding matrix. Called in logit.py to access the document embedding matrix. Call after complete train_doc_fixed.py
+
+## get_word_embedding.py Function to get the word embedding matrix. Called in train_doc_fixed.py. Call after complete train_doc.py
+
+## logit.py Single layer neural network. Feed the document embedding matrix to the network to train the classifier. It evaluates the performance of our model. Call it after complete train_doc_fixed.py
+
+## make_word_embedding.py Helper function to store work embedding matrix in a neater way.
+
+## rate.py Unsupervised classifer. Use k-means to classify our documents. Evaluate the performance of our model.
+
+## train_doc_fixed.py Train the document embedding matrix with the word embedding matrix fixed. Call after train_doc.py
+
+## train_doc.py Train the document embedding matrix and word embedding matrix simultaneously. The first train file to run. Stop it when the word embedding matrix has been trained enough.
+
+Reference
+TensorFlow word embedding tutorial: 

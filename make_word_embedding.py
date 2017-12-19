@@ -1,53 +1,20 @@
-import tensorflow as tf
 import numpy as np
-import Config
+import tensorflow as tf
+import collections
 import math
 import time
 import os
 
+import Config
 
-def read_data_preprocessed(dataset_name=Config.dataset_name,train=True):
-    """
-    return lines:
-                    lines[i][0] is the label
-                    lines[i][-1] is the document_index
-    """
-    if train:
-        train_path = 'train'
-    else:
-        train_path = 'test'
-    path = 'data/'+train_path+"_"+dataset_name+".txt"
-    with open(path,'r') as h:
-        content = h.readlines()
-    lines = [x.split()+[i] for i,x in enumerate(content)]
-    return lines
-
-def lines2struct(l=read_data_preprocessed()):
-    """
-        return a data structure which looks like : [[index,label,[words]],...,]
-    """
-    result = list()
-    for each in l:
-        index = each[-1]
-        label = each[0]
-        dataflow = each[1:-1]
-        result.append([index,label,dataflow])
-    return result
-
-
-model_path  = tf.train.latest_checkpoint('model/')
-document_index = int(model_path[10:])
-result = lines2struct()
-document_size = len(result)
-document_label = [int(label[1]) for label in result][:document_index]
-del result,lines2struct,read_data_preprocessed
 # =============================================================
-valid_size = 16     # Random set of words to evaluate similarity on.
-valid_window = 100  # Only pick dev samples in the head of the distribution.
+valid_size = 16
+valid_window = 100
 valid_examples = np.random.choice(valid_window, valid_size, replace=False)
-# Build the graph
-# ===================================================================================================================================================================
+document_size = 560000
+# Build the graph.
 graph = tf.Graph()
+
 with graph.as_default():
 
     train_inputs = tf.placeholder(tf.int32,shape=[Config.batch_size])
@@ -99,9 +66,8 @@ with graph.as_default():
     doc_norm = tf.sqrt(tf.reduce_sum(tf.square(document_embeddings), 1, keep_dims=True))
     doc_normalized_embeddings = tf.Variable(document_embeddings / doc_norm)
 
-    saver = tf.train.Saver()
-    # saver = tf.train.Saver(max_to_keep = 3)
-    #
+    saver = tf.train.Saver(max_to_keep = 3)
+
     temp_normalized_embeddings = embeddings / norm
     valid_embeddings = tf.nn.embedding_lookup(
         temp_normalized_embeddings, valid_dataset)
@@ -110,42 +76,18 @@ with graph.as_default():
 
     init = tf.global_variables_initializer()
 
-# ===========================================================================================================
-
+model_path = tf.train.latest_checkpoint("model_windowSize2/")
 with tf.Session(graph=graph) as session:
     saver.restore(session,model_path)
-    doc = doc_normalized_embeddings.eval()
-doc = doc[:document_index,:]
+    word_embedding_matrix = normalized_embeddings.eval()
 
-#
-#
-# def plot_with_labels(low_dim_embs, labels, filename):
-#   # assert low_dim_embs.shape[0] >= len(labels), 'More labels than embeddings'
-#   plt.figure(figsize=(18, 18))  # in inches
-#   for i, label in enumerate(labels):
-#     x, y = low_dim_embs[i, :]
-#     plt.scatter(x, y)
-#     plt.annotate(label,
-#                  xy=(x, y),
-#                  xytext=(5, 2),
-#                  textcoords='offset points',
-#                  ha='right',
-#                  va='bottom')
-#
-#   plt.savefig(filename)
-#
-# try:
-#   # pylint: disable=g-import-not-at-top
-#   from sklearn.manifold import TSNE
-#   import matplotlib.pyplot as plt
-#
-#   for per in range(5,50):
-#       tsne = TSNE(perplexity=per, n_components=2, init='pca', n_iter=2500, method='exact')
-#       plot_only = 500
-#       low_dim_embs = tsne.fit_transform(doc[:plot_only, :])
-#       # word_labels = [reverse_dictionary[i] for i in range(plot_only)]
-#       plot_with_labels(low_dim_embs, document_label[:plot_only], os.path.join(os.getcwd(), str(int(time.time()))+'_'+str(per)+'_doc.png'))
-#
-# except ImportError as ex:
-#   print('Please install sklearn, matplotlib, and scipy to show embeddings.')
-#   print(ex)
+new_graph = tf.Graph()
+with new_graph.as_default():
+    a = tf.constant(word_embedding_matrix)
+    word_embedding = tf.Variable(a)
+    saver = tf.train.Saver()
+    init = tf.global_variables_initializer()
+
+with tf.Session(graph=new_graph) as session:
+    init.run()
+    saver.save(session,'word_embedding/')

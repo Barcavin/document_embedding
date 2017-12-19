@@ -5,9 +5,9 @@ import math
 import time
 import os
 
-logit_batch = 200
-epochs = 300
-units = 20
+logit_batch = 400
+epochs = 2000
+units = 30
 nclass = 2
 learning_rate = 0.02
 
@@ -48,7 +48,7 @@ def get_doc_labels():
     document_label = [int(label[1]) for label in result][:holding]
     del result,lines2struct,read_data_preprocessed
     import get_fixed_doc
-    doc = get_fixed_doc.get_fixed_doc()
+    doc = get_fixed_doc.get_fixed_doc()[:holding]
 
     document_label = np.array(document_label)
     document_label -=1 # 0,1
@@ -104,7 +104,7 @@ with logit_graph.as_default():
 with tf.Session(graph=logit_graph) as session:
     init.run(session=session)
     print("Initialized")
-
+    plot_result = list()
     average_loss = 0
     step = 0
     while epoch < epochs:
@@ -116,8 +116,11 @@ with tf.Session(graph=logit_graph) as session:
         if step % 100 == 0:
             average_loss /= 100
             print('Average loss at step ', step, ': ', average_loss,", epoch:",epoch)
+            plot_result.append([step,average_loss])
             average_loss = 0
     print("Complete Train")
+    print("Saving the model")
+    # saver.save(session,'logit/')
     print("Calculate accuracy")
     feed_dict = {train_inputs:doc}
     pred = session.run(prediction,feed_dict = feed_dict)
